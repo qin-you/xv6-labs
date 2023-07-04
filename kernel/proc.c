@@ -141,6 +141,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  /* trace: child not trace by default */
+  p->tmask = 0;
+
   return p;
 }
 
@@ -314,6 +317,9 @@ fork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
+
+  /* trace: inherit parent's trace mask */
+  np->tmask = p->tmask;
 
   return pid;
 }
@@ -653,4 +659,21 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+
+uint64
+nproc(void)
+{
+  uint64 count = 0;
+  struct proc *p = &proc[0];
+
+  for(; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED)
+      count++;
+    release(&p->lock);
+  }
+
+  return count;
 }
