@@ -105,6 +105,7 @@ static struct proc*
 allocproc(void)
 {
   struct proc *p;
+  struct usyscall *usc;
 
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
@@ -127,6 +128,13 @@ found:
     return 0;
   }
 
+  // usyscall
+  if ((p->psyscall = (uint64)kalloc()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -141,6 +149,17 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  
+
+  // use pa to manipulate the page
+  usc = (struct usyscall *)p->psyscall;
+  usc->pid = p->pid;
+
+  // or use va to manipuate the page
+  // usc = (struct usyscall *)USYSCALL;
+  // usc->pid = p->pid;
+
+
   return p;
 }
 
@@ -150,11 +169,17 @@ found:
 static void
 freeproc(struct proc *p)
 {
-  if(p->trapframe)
-    kfree((void*)p->trapframe);
+  // if(p->trapframe)
+  //   kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  // if (p->psyscall) 
+  //   kfree((void*)p->psyscall);
+  p->psyscall = 0;
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -196,6 +221,13 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  if (mappages(pagetable, USYSCALL, PGSIZE, p->psyscall, PTE_U|PTE_R) < 0) {
+    uvmunmap(p->pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(p->pagetable, TRAPFRAME, 1, 0);
+    uvmfree(p->pagetable, 0);
+    return 0;
+  }
+
   return pagetable;
 }
 
@@ -204,8 +236,11 @@ proc_pagetable(struct proc *p)
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
+  // release leaf
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0); 
+  // release pagetable
   uvmfree(pagetable, sz);
 }
 

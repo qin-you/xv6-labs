@@ -288,6 +288,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+
   freewalk(pagetable);
 }
 
@@ -431,4 +432,38 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+
+/* traverse pagetable and print all used PTEs. refer freewalk*/
+void
+vmprint_helper(pagetable_t pagetable, int depth)
+{
+  static char* predots[] = {
+      "",
+      "..",
+      ".. ..",
+      ".. .. .."
+  };
+
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+      printf("%s%d: pte %p pa %p\n", predots[depth], i, pte, PTE2PA(pte));
+      
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+        // this PTE points to a lower-level page table.
+        uint64 child = PTE2PA(pte);
+        vmprint_helper((pagetable_t)child, depth + 1);
+      }
+    }
+  }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\r\n", pagetable);
+  vmprint_helper(pagetable, 1);
 }
