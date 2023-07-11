@@ -10,11 +10,32 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
+struct thread_context {
+  uint64 ra;
+  uint64 sp;
+
+  // callee-saved
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
+};
 
 struct thread {
-  char       stack[STACK_SIZE]; /* the thread's stack */
-  int        state;             /* FREE, RUNNING, RUNNABLE */
+  struct thread_context     thread_context;    /* register status */
+  char                      stack[STACK_SIZE]; /* the thread's stack */
+  int                       state;             /* FREE, RUNNING, RUNNABLE */
 };
+
+
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
 extern void thread_switch(uint64, uint64);
@@ -30,6 +51,15 @@ thread_init(void)
   current_thread = &all_thread[0];
   current_thread->state = RUNNING;
 }
+
+void clear_thread(struct thread *t, void (*func)()) {
+  memset((void *)&t->stack, 0, STACK_SIZE);
+  memset((void *)&t->thread_context, 0, sizeof(struct thread_context));
+  t->state = RUNNABLE;
+  t->thread_context.sp = (uint64) ((char *)&t->stack + STACK_SIZE);  // 初始sp在栈顶
+  t->thread_context.ra = (uint64) func;  // 初始跳转位置是user传进来的线程函数
+}
+
 
 void 
 thread_schedule(void)
@@ -62,6 +92,8 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
+    // switch context and ra sp
+    thread_switch((uint64)&t->thread_context, (uint64)&current_thread->thread_context);
   } else
     next_thread = 0;
 }
@@ -76,6 +108,11 @@ thread_create(void (*func)())
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+  // memset((void *)t->stack, 0, STACK_SIZE);
+  // memset((void *)&t->thread_context, 0, sizeof(struct thread_context));
+  t->thread_context.sp = (uint64)(t->stack + STACK_SIZE);
+  t->thread_context.ra = (uint64)func;
+  // clear_thread(t, func);
 }
 
 void 
