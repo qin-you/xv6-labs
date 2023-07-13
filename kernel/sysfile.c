@@ -291,6 +291,7 @@ sys_open(void)
   struct file *f;
   struct inode *ip;
   int n;
+  int r;
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
@@ -315,6 +316,34 @@ sys_open(void)
       return -1;
     }
   }
+
+  /* find target file if this is a sympolink and not set O_NOFOLLOW */
+  /* i.e. find correct ip*/
+  int depth = 0;
+  while (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    char ktarget[MAXPATH];
+    memset(ktarget, 0, MAXPATH);
+    if ((r = readi(ip, 0, (uint64)ktarget, 0, MAXPATH)) < 0) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    iunlockput(ip);
+    if ((ip = namei(ktarget)) == 0) {     // get inode according to name
+      // target file not exist
+      end_op();
+      return -1;
+    }
+
+    ilock(ip);
+    depth++;
+    if (depth > 10) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
@@ -483,4 +512,46 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64 
+sys_symlink(void)
+{
+  char kpath[MAXPATH], ktarget[MAXPATH];
+  memset(kpath, 0, MAXPATH);
+  memset(ktarget, 0, MAXPATH);
+  struct inode *ip;
+  int n, r;
+
+  if ((n = argstr(0, ktarget, MAXPATH)) < 0)
+    return -1;
+
+  if ((n = argstr(1, kpath, MAXPATH)) < 0)
+    return -1;
+
+  int ret = 0;
+
+  begin_op();
+
+  if ((ip = namei(kpath)) != 0) {
+    // symlink already exists
+    ret = -1;
+    goto final;
+  }
+
+  ip = create(kpath, T_SYMLINK, 0, 0);
+  if (ip == 0) {
+    ret = -1;
+    goto final;
+  }
+
+  // write ktarget's content to inode's blocks specified by ip->addrs
+  if ((r = writei(ip, 0, (uint64)ktarget, 0, MAXPATH)) < 0) {
+    ret = -1;
+  }
+  iunlockput(ip);
+
+final:
+  end_op();
+  return ret;
 }
