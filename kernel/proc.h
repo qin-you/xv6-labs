@@ -1,3 +1,15 @@
+#define NVMA 16       // a process can mmap 16 files at most
+struct vma {          // denote the virtual memory area mapped from the file fd below
+  int     valid;      // is used? / is this area valid?
+  uint64  addr;       // start address
+  int     length;     // size of virtual memory area
+  int     prot;       // PROT_READ, PROT_WRITE,PROT_SHARED etc. flags of vma
+  int     flags;      // MAP_SHARED, MAP_PRIVATE etc. flags of map
+  int     fd;         // file used to map to user space
+  int     offset;     // map offset of the file
+  struct  file *f;    // file struct of mapped file
+};
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -105,4 +117,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  struct vma  vmas[NVMA];      // virtual memory area array
 };
+

@@ -484,3 +484,121 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+uint64 
+sys_mmap(void)
+{
+  uint64 failure = (uint64)((char*) -1);
+  struct proc *p = myproc();
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  struct file *f;
+
+  // parse args
+  if (argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 || 
+  argint(3, &flags) < 0 || argfd(4, &fd, &f) < 0 || argint(5, &offset) < 0)
+    return failure;
+
+  if (addr !=0)
+    return failure;   // dissupport specify addr
+
+  length = PGROUNDUP(length);
+
+  // safety check
+  if (p->sz + length > MAXVA)
+    return failure;
+  if (!f->readable && (prot & PROT_READ))
+    return failure;
+  if (!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED))
+    return failure;
+  
+  // allocate virtual user space to map but not allocate physical mem.
+  // lazy allocation. allocation occurs in usertrap function while page fault exception
+  for (int i = 0; i < NVMA; i++) {
+    struct vma *vma = &p->vmas[i];
+    if (vma->valid == 0) {
+      vma->valid = 1;
+      vma->addr = p->sz;
+      vma->length = length;
+      vma->prot = prot;
+      vma->flags = flags;
+      vma->fd = fd;
+      vma->offset = offset;
+      vma->f = f;
+
+      p->sz += length;
+      filedup(f);         // add reference count of file
+
+      return vma->addr;
+    }
+  }
+
+  return failure;
+}
+
+
+uint64 
+sys_munmap(void)
+{
+  uint64  addr;
+  int     length;
+  if (argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+  struct proc *p = myproc();
+  struct vma *vma = 0;
+  int idx = -1;
+
+  // find related vma
+  for (int i = 0; i < NVMA; i++) {
+    vma = &p->vmas[i];
+    if (!(vma->valid == 1 && addr >= vma->addr && addr < vma->addr + vma->length))
+      continue;
+    idx = i;
+    break;
+  }
+
+  if (idx == -1)
+    return -1;
+
+  // write dirty page to disk if MAP_SHARED
+  addr = PGROUNDDOWN(addr);
+  length = PGROUNDUP(length);
+  if (vma->flags & MAP_SHARED) {
+    if(filewrite(vma->f, addr, length) < 0) {
+      printf("filewrite return < 0\n");
+      // return -1;
+      // FIXME: only write dirty page back
+    }
+  }
+
+  // free mapped memory virtual and physical
+  uvmunmap(p->pagetable, addr, length/PGSIZE, 1);
+  // FIXME: only unmap the specified area not all.
+
+  // update vma parameters
+  if (addr == vma->addr && length == vma->length) {
+    // fully unmapped. most situations
+    fileclose(vma->f);
+    vma->valid = 0;
+  } else if (addr == vma->addr) {
+    // partially unmapped from the start
+    vma->addr +=   length;
+    vma->length -= length;
+    // vma->offset += length;
+  } else if (addr + length == vma->addr + vma->length) {
+    // partially unmapped from the end. seldom.
+    vma->length -= length;
+    if (vma->length == 0) {
+      fileclose(vma->f);
+      vma->valid = 0;
+    }
+  } else {
+    // unmapped from the middle, panic!
+    panic("munmap cannot begin from the middle");
+  }
+
+  return 0;
+}
+
+

@@ -5,6 +5,12 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+
+// notice order
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -37,6 +43,7 @@ void
 usertrap(void)
 {
   int which_dev = 0;
+  
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
@@ -65,6 +72,54 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if (r_scause() == 13 || r_scause() == 15) {
+    // page fault exception caused by read or write
+    uint64 va = (uint64)r_stval();
+    struct vma *vma;
+    uint64 pa = 0;
+    int perm = 0;
+
+    if (va > MAXVA || va > p->sz || va < 0)
+      p->killed = 1;
+    else {
+    // bind va with the newly allocated pa, set pte(first find related vma)
+      for (int i = 0; i < NVMA; i++) {
+        vma = &p->vmas[i];
+        if (vma->valid == 1 && va >= vma->addr && va < vma->addr + vma->length) {
+          va = PGROUNDDOWN(va);
+          pa = (uint64)kalloc();
+          if (pa == 0) {
+            p->killed = 1;
+            break;
+          }
+          memset((void*)pa, 0, PGSIZE);
+
+          do {
+            perm |= PTE_U;
+            if (vma->prot & PROT_READ)
+              perm |= PTE_R;
+            if (vma->prot & PROT_WRITE)
+              perm |= PTE_W;
+            if (vma->prot & PROT_EXEC)
+              perm |= PTE_X;
+          } while (0);
+          mappages(p->pagetable, va, PGSIZE, pa, perm);
+
+          break;
+        }
+      }
+    }
+
+    // copy data from disk to pa (according to inode)
+    if (pa) {
+      ilock(vma->f->ip);
+      if (readi(vma->f->ip, 0, pa, vma->offset + va - vma->addr, PGSIZE) < 0) {
+        iunlock(vma->f->ip);
+        p->killed = 1;
+        exit(-1);
+      }
+      iunlock(vma->f->ip);
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

@@ -6,6 +6,8 @@
 #include "proc.h"
 #include "defs.h"
 
+#include "fcntl.h"
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -312,6 +314,20 @@ fork(void)
   release(&wait_lock);
 
   acquire(&np->lock);
+  // inherit vma between parent and child
+  for (int i = 0; i < NVMA; i++) {
+    struct vma *vma = &p->vmas[i];
+    struct vma *nvma = &np->vmas[i];
+    if (vma->valid == 0)
+      continue;
+    // uint64 pa = 0;
+    // if (walkaddr(np->pagetable, pa) > 0) {
+    //   kfree((void*)pa);
+    // }
+    *nvma = *vma;
+    filedup(nvma->f);
+  }
+
   np->state = RUNNABLE;
   release(&np->lock);
 
@@ -343,6 +359,21 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // unmap all mmap vma
+  for (int i = 0; i < NVMA; i++) {
+    struct vma *vma = &p->vmas[i];
+    if (vma->valid == 0)
+      continue;
+    // if MAP_SHARED set, write back to disk
+    if (vma->flags & MAP_SHARED)
+      filewrite(vma->f, vma->addr, vma->length);
+    // close file
+    fileclose(vma->f);
+    // free physcial mem
+    uvmunmap(p->pagetable, vma->addr, vma->length / PGSIZE, 1);
+    vma->valid = 0;
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
